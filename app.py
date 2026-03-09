@@ -6,7 +6,8 @@ import shutil
 from flask import Flask, request, render_template, send_file, flash, redirect, url_for
 from werkzeug.utils import secure_filename
 from PIL import Image, ImageCms
-import rembg
+# Importujemy new_session, aby móc ręcznie zmienić wagi modelu AI
+from rembg import remove, new_session
 
 app = Flask(__name__)
 app.secret_key = 'super-secret-professional-key-2026'
@@ -14,13 +15,26 @@ app.secret_key = 'super-secret-professional-key-2026'
 class PackshotProcessor:
     def __init__(self):
         self.srgb_profile = ImageCms.createProfile("sRGB")
+        # Zmiana domyślnego modelu u2net na wysoce precyzyjny isnet-general-use
+        # Jest to model znacznie lepiej radzący sobie z mikrokontrastami i wieloma obiektami
+        self.ai_session = new_session("isnet-general-use")
 
     def remove_background(self, input_data):
         try:
-            output_data = rembg.remove(input_data)
+            # Włączenie Alpha Matting (ochrona białych krawędzi na jasnym tle) 
+            # oraz Post Process (ochrona oddzielnych, mniejszych elementów jak saszetki)
+            output_data = remove(
+                input_data,
+                session=self.ai_session,
+                post_process_mask=True,
+                alpha_matting=True,
+                alpha_matting_foreground_threshold=240,
+                alpha_matting_background_threshold=10,
+                alpha_matting_erode_size=5
+            )
             return Image.open(io.BytesIO(output_data)).convert("RGBA")
         except Exception as e:
-            print(f"Błąd AI: {e}")
+            print(f"Błąd krytyczny AI podczas szparowania: {e}")
             return None
 
     def crop_to_content(self, img):
@@ -37,6 +51,8 @@ class PackshotProcessor:
         
         paste_x = (target_size - new_w) // 2
         paste_y = (target_size - new_h) // 2
+        
+        # Wklejanie z użyciem maski alfa w celu zachowania idealnie gładkich krawędzi wygenerowanych przez Alpha Matting
         canvas.paste(resized_img, (paste_x, paste_y), resized_img)
         return canvas
 
