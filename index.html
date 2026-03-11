@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Ekspert Składów INCI</title>
+    
+    <!-- Tailwind CSS dla stylów -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Phosphor Icons - profesjonalne ikony ładujące się w przeglądarce -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    
+    <!-- Biblioteki React do działania logiki -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel do kompilacji JSX w locie -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tesseract OCR dla sztucznej inteligencji skanowania etykiet -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
+    <style>
+        body { -webkit-tap-highlight-color: transparent; }
+        @keyframes scan {
+          0% { transform: translateY(0); }
+          50% { transform: translateY(400px); }
+          100% { transform: translateY(0); }
+        }
+        .animate-scan {
+            animation: scan 2s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body class="bg-slate-100 font-sans antialiased text-slate-800">
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef, useEffect } = React;
+
+        // --- HIERARCHICZNA BAZA WIEDZY O SKŁADNIKACH ---
+        const INCI_DB = [
+            { keys: ["TRIMETHYLBENZOYL DIPHENYLPHOSPHINE OXIDE", "PERBORIC ACID", "4-METHYLBENZYLIDENE CAMPHOR", "BENZOPHENONE-2", "BENZOPHENONE-5", "N,N-DIMETHYL-P-TOLUIDINE", "DIBUTYLTIN OXIDE", "TETRABROMOBISPHENOL-A"], type: 'bad', severity: 'critical', desc: "ZAKAZ UE: Substancja kancerogenna/reprotoksyczna lub zaburzacz endokrynny." },
+            { keys: ["POLYETHYLENE", "POLYPROPYLENE", "POLYMETHYL METHACRYLATE", "PMMA", "NYLON-12", "POLYETHYLENE TEREPHTHALATE"], type: 'bad', severity: 'critical', desc: "MIKROPLASTIK: Zakazany w UE, nie ulega biodegradacji." },
+            { keys: ["TRIETHANOLAMINE", "PEG-", "POLYSORBATE 60", "POLYSORBATE 80"], type: 'bad', severity: 'high', desc: "Przestarzała baza. Ryzyko zanieczyszczeń lub powstawania nitrozoamin." },
+            { keys: ["PHENOXYETHANOL", "METHYLPARABEN", "PROPYLPARABEN", "IMIDAZOLIDINYL UREA", "DMDM HYDANTOIN"], type: 'bad', severity: 'medium', desc: "Stary konserwant. Wysoko w składzie może silnie drażnić barierę hydrolipidową." },
+            { keys: ["MINERAL OIL", "PETROLATUM", "PARAFFINUM LIQUIDUM"], type: 'bad', severity: 'medium', desc: "Pochodna ropy naftowej (olej mineralny). Okluzyjna, ale bez wartości odżywczych." },
+            { keys: ["LINALOOL", "LIMONENE", "GERANIOL", "CITRAL", "HEXYL SALICYLATE", "ACETYLATED VETIVER OIL", "CITRONELLOL", "EUGENOL", "PARFUM", "FRAGRANCE"], type: 'bad', severity: 'low', desc: "Kompozycja zapachowa / Alergen. Ryzyko podrażnień cer wrażliwych." },
+            { keys: ["HYDROLYZED SPONGE", "HYDROLYZED SPICULE"], type: 'good', tier: 1, name: "Spikule Morskie", desc: "Mikroigły stymulujące odnowę i przenikanie. Skuteczne nawet w niższych stężeniach." },
+            { keys: ["SODIUM DNA", "SALMON DNA"], type: 'good', tier: 1, name: "PDRN", desc: "Silnie stymuluje produkcję kolagenu i regenerację tkanek." },
+            { keys: ["CALLUS CULTURE", "EXTRACELLULAR VESICLES"], type: 'good', tier: 1, name: "Egzosomy", desc: "Szczyt biotechnologii komunikacji komórkowej." },
+            { keys: ["ECTOIN", "BAKUCHIOL", "COPPER TRIPEPTIDE"], type: 'good', tier: 1, name: "Zaawansowana Biotechnologia", desc: "Potężne działanie anti-aging bez efektów ubocznych (np. fito-retinol, ekstremofity)." },
+            { keys: ["TRIPEPTIDE", "HEXAPEPTIDE", "PALMITOYL PENTAPEPTIDE"], type: 'good', tier: 2, name: "Peptydy", desc: "Białka sygnałowe. Ujędrniają i spłycają zmarszczki." },
+            { keys: ["CERAMIDE NP", "CERAMIDE AP", "CERAMIDE EOP", "CERAMIDE"], type: 'good', tier: 2, name: "Ceramidy", desc: "Odbudowują kluczową barierę hydrolipidową." },
+            { keys: ["ASCORBIC ACID", "RETINOL", "RETINAL", "AZELAIC ACID"], type: 'good', tier: 2, name: "Klasyczny Gold-Standard", desc: "Klinicznie udowodnione działanie przeciwstarzeniowe i złuszczające." },
+            { keys: ["NIACINAMIDE"], type: 'good', tier: 2, name: "Niacynamid (B3)", desc: "Reguluje sebum, rozjaśnia i łagodzi stany zapalne. Najlepszy w stężeniach 2-5%." },
+            { keys: ["DIMETHYL ISOSORBIDE"], type: 'good', tier: 2, name: "Nowoczes Promotor", desc: "Ułatwia wnikanie dużych cząsteczek bez uszkadzania skóry." },
+            { keys: ["CETEARYL OLIVATE", "SORBITAN OLIVATE", "CETEARYL GLUCOSIDE"], type: 'good', tier: 3, name: "Baza Ciekłokrystaliczna", desc: "Idealny emulgator. Naśladuje fizjologiczne lipidy naskórka." },
+            { keys: ["HYALURONIC ACID", "SODIUM HYALURONATE"], type: 'good', tier: 3, name: "Kwas Hialuronowy", desc: "Wiąże wodę w naskórku. Podstawa nawilżenia." },
+            { keys: ["SQUALANE", "PANTHENOL", "ALLANTOIN", "TREHALOSE", "BETA-GLUCAN", "BUTYROSPERMUM PARKII"], type: 'good', tier: 3, name: "Substancje Łagodzące i NMF", desc: "Składniki kojące, chroniące i regenerujące naskórek." },
+            { keys: ["GLYCERIN"], type: 'good', tier: 3, name: "Gliceryna", desc: "Skuteczna baza nawilżająca o świetnej penetracji." },
+            { keys: ["PENTYLENE GLYCOL", "1,2-HEXANEDIOL", "CAPRYLYL GLYCOL", "ETHYLHEXYLGLYCERIN"], type: 'good', tier: 3, name: "Hurdle Technology", desc: "System nawilżająco-konserwujący (zastępuje stare parabeny)." }
+        ];
+
+        // --- LOGIKA ANALIZATORA ---
+        const evaluateINCI = (rawText) => {
+            const inciList = rawText.split(/[,/]+/).map(item => item.toUpperCase().trim()).filter(Boolean);
+            const totalIngredients = inciList.length;
+            
+            let analyzedGood = [];
+            let analyzedBad = [];
+            let stats = { critical: 0, highBad: 0, medBad: 0, lowBad: 0, tier1: 0, tier2: 0, tier3: 0 };
+
+            inciList.forEach((inciItem, idx) => {
+                let matched = false;
+                const position = idx + 1;
+                const isTop5 = position <= 5; 
+                
+                for (const dbItem of INCI_DB) {
+                    const isMatch = dbItem.keys.some(keyword => inciItem.includes(keyword));
+                    if (isMatch) {
+                        if (dbItem.type === 'good') {
+                            if (!analyzedGood.some(g => g.name === dbItem.name)) {
+                                analyzedGood.push({ inci: inciItem, position, total: totalIngredients, isTop5, ...dbItem });
+                                if(dbItem.tier === 1) stats.tier1++;
+                                if(dbItem.tier === 2) stats.tier2++;
+                                if(dbItem.tier === 3) stats.tier3++;
+                            }
+                        } else if (dbItem.type === 'bad') {
+                            let escalatedSeverity = dbItem.severity;
+                            let escalatedDesc = dbItem.desc;
+                            if (isTop5 && (dbItem.severity === 'medium' || dbItem.severity === 'high')) {
+                                escalatedDesc = `⚠️ KRYTYCZNE STĘŻENIE (Baza): Ten ryzykowny składnik jest w pierwszej 5-tce (największe stężenie). ` + dbItem.desc;
+                                stats.highBad++; 
+                            } else {
+                                if(dbItem.severity === 'critical') stats.critical++;
+                                if(dbItem.severity === 'high') stats.highBad++;
+                                if(dbItem.severity === 'medium') stats.medBad++;
+                                if(dbItem.severity === 'low') stats.lowBad++;
+                            }
+                            analyzedBad.push({ inci: inciItem, position, total: totalIngredients, isTop5, severity: escalatedSeverity, desc: escalatedDesc, ...dbItem });
+                        }
+                        matched = true;
+                        break; 
+                    }
+                }
+            });
+
+            analyzedGood.sort((a, b) => {
+                if (a.tier !== b.tier) return a.tier - b.tier; 
+                return a.position - b.position; 
+            });
+            
+            const leadingIngredient = analyzedGood.length > 0 ? analyzedGood[0] : null;
+            let verdict, verdictSub, bgColor, iconClass;
+
+            if (stats.critical > 0) {
+                verdict = "SKŁAD ODRZUCANY";
+                verdictSub = "Niezgodny z normami bezpieczeństwa UE (CMR/Mikroplastiki).";
+                bgColor = "bg-red-600";
+                iconClass = "ph ph-stop-circle text-white text-3xl";
+            } else if (stats.highBad > 0) {
+                verdict = "KONTROWERSYJNY BUBEL";
+                verdictSub = "Oparty na przestarzałych, ryzykownych składnikach w ogromnym stężeniu.";
+                bgColor = "bg-orange-500";
+                iconClass = "ph ph-warning text-white text-3xl";
+            } else if (stats.tier1 > 0 || stats.tier2 > 0) {
+                if (stats.lowBad > 0 || stats.medBad > 0) {
+                    verdict = "DOBRY SKŁAD (Z Uwagami)";
+                    verdictSub = "Świetne substancje aktywne, ale zawiera alergeny zapachowe.";
+                    bgColor = "bg-emerald-500";
+                    iconClass = "ph ph-check-circle text-white text-3xl";
+                } else {
+                    verdict = "ZNAKOMITY SKŁAD";
+                    verdictSub = "Czysta, mistrzowska formuła. Składniki ułożone z zachowaniem zasad chemicznych.";
+                    bgColor = "bg-emerald-600";
+                    iconClass = "ph ph-crown text-white text-3xl";
+                }
+            } else if (stats.tier3 > 0) {
+                if (stats.medBad > 0) {
+                    verdict = "PRZECIĘTNY SKŁAD";
+                    verdictSub = "Podstawowe nawilżenie z dodatkiem starszych konserwantów.";
+                    bgColor = "bg-yellow-500";
+                    iconClass = "ph ph-info text-white text-3xl";
+                } else {
+                    verdict = "DOBRY SKŁAD BAZOWY";
+                    verdictSub = "Czysty, bezpieczny kosmetyk nakierowany na standardowe nawilżenie (bez alergenów).";
+                    bgColor = "bg-blue-500";
+                    iconClass = "ph ph-drop text-white text-3xl";
+                }
+            } else {
+                verdict = "BRAK DANYCH / NEUTRALNY";
+                verdictSub = "Aplikacja nie rozpoznała kluczowych substancji w tym zestawieniu.";
+                bgColor = "bg-slate-500";
+                iconClass = "ph ph-info text-white text-3xl";
+            }
+
+            return { verdict, verdictSub, bgColor, iconClass, leadingIngredient, goodIngredients: analyzedGood, badIngredients: analyzedBad, totalIngredients };
+        };
+
+        const App = () => {
+            const [view, setView] = useState('home'); 
+            const [inciInput, setInciInput] = useState('');
+            const [results, setResults] = useState(null);
+            
+            const [ocrStatus, setOcrStatus] = useState('');
+            const [ocrProgress, setOcrProgress] = useState(0);
+            const [previewImage, setPreviewImage] = useState(null);
+            const fileInputRef = useRef(null);
+
+            const sampleGreat = "Aqua, Niacinamide, Glycerin, Ectoin, Cetearyl Olivate, Sorbitan Olivate, Ceramide NP, Sodium Hyaluronate, Pentylene Glycol";
+            
+            const handleAnalyze = () => {
+                if (!inciInput.trim()) return;
+                setResults(evaluateINCI(inciInput));
+                setView('results');
+            };
+
+            const handleCameraCapture = async (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                setView('scanning');
+                setOcrStatus('Przygotowywanie obrazu...');
+                setOcrProgress(0);
+
+                const imageURL = URL.createObjectURL(file);
+                setPreviewImage(imageURL);
+
+                try {
+                    setOcrStatus('Inicjalizacja silnika AI (OCR)...');
+                    
+                    const result = await Tesseract.recognize(
+                        file,
+                        'eng', 
+                        {
+                            logger: m => {
+                                if (m.status === 'recognizing text') {
+                                    setOcrStatus('Odczytywanie składu INCI...');
+                                    setOcrProgress(Math.floor(m.progress * 100));
+                                }
+                            }
+                        }
+                    );
+
+                    setInciInput(result.data.text);
+                    URL.revokeObjectURL(imageURL);
+                    setPreviewImage(null);
+                    setView('home'); 
+                    
+                } catch (error) {
+                    console.error(error);
+                    setOcrStatus('Wystąpił błąd aparatu/OCR. Spróbuj wpisać ręcznie.');
+                    setTimeout(() => setView('home'), 3000);
+                }
+            };
+
+            const PositionBadge = ({ pos, total, isTop5 }) => (
+                <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${isTop5 ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>
+                    <i className="ph ph-list-numbers text-xs"></i>
+                    Poz. {pos}/{total} {isTop5 && "(BAZA)"}
+                </div>
+            );
+
+            return (
+                <div className="min-h-screen bg-slate-100 flex justify-center">
+                    <input 
+                        type="file" 
+                        accept="image/*" 
+                        capture="environment" 
+                        ref={fileInputRef} 
+                        onChange={handleCameraCapture} 
+                        className="hidden" 
+                    />
+
+                    <div className="w-full max-w-md bg-white shadow-2xl relative overflow-hidden flex flex-col h-screen">
+                        
+                        <header className="bg-slate-900 text-white p-4 flex justify-between items-center z-10 shadow-md">
+                            <div className="flex items-center gap-2">
+                                <i className="ph ph-magnifying-glass text-blue-400 text-xl"></i>
+                                <h1 className="font-bold text-lg tracking-wide">Ekspert Składów INCI</h1>
+                            </div>
+                            {view === 'results' && (
+                                <button onClick={() => setView('home')} className="p-1.5 bg-slate-800 rounded-full hover:bg-slate-700 transition">
+                                    <i className="ph ph-caret-left text-xl"></i>
+                                </button>
+                            )}
+                        </header>
+
+                        {view === 'scanning' && (
+                            <div className="flex-1 flex flex-col bg-slate-900 text-white relative">
+                                {previewImage ? (
+                                    <div className="absolute inset-0 z-0">
+                                        <img src={previewImage} alt="Podgląd skanu" className="w-full h-full object-cover opacity-40 grayscale" />
+                                        <div className="absolute top-0 left-0 w-full h-1 bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.8)] animate-scan"></div>
+                                    </div>
+                                ) : (
+                                    <div className="absolute inset-0 flex items-center justify-center">
+                                        <i className="ph ph-spinner ph-spin text-blue-500 text-5xl"></i>
+                                    </div>
+                                )}
+                                
+                                <div className="relative z-10 flex flex-col h-full justify-end p-8 pb-16 bg-gradient-to-t from-slate-900 via-slate-900/80 to-transparent">
+                                    <div className="text-center">
+                                        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-500/20 text-blue-400 mb-4">
+                                            <i className="ph ph-camera text-3xl"></i>
+                                        </div>
+                                        <h3 className="text-xl font-bold mb-2">{ocrStatus}</h3>
+                                        
+                                        <div className="w-full bg-slate-800 rounded-full h-2 mb-2 overflow-hidden">
+                                            <div className="bg-blue-500 h-2 rounded-full transition-all duration-300" style={{ width: `${ocrProgress}%` }}></div>
+                                        </div>
+                                        <p className="text-sm text-slate-400 font-mono">{ocrProgress}% - Przetwarzanie maszynowe</p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {view === 'home' && (
+                            <div className="flex-1 overflow-y-auto p-6 flex flex-col">
+                                <div className="mb-6">
+                                    <button 
+                                        onClick={() => fileInputRef.current?.click()}
+                                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-6 rounded-2xl shadow-lg flex flex-col items-center justify-center gap-3 transition-transform active:scale-95"
+                                    >
+                                        <div className="bg-white/20 p-4 rounded-full">
+                                            <i className="ph ph-camera text-3xl text-white"></i>
+                                        </div>
+                                        <div className="text-center">
+                                            <span className="block text-lg">Zrób zdjęcie etykiety</span>
+                                            <span className="block text-xs text-blue-200 font-normal mt-1">Sztuczna Inteligencja (OCR) odczyta skład z opakowania</span>
+                                        </div>
+                                    </button>
+                                </div>
+
+                                <div className="flex items-center gap-4 mb-6">
+                                    <div className="h-px bg-slate-200 flex-1"></div>
+                                    <span className="text-xs text-slate-400 font-semibold uppercase tracking-widest">LUB EDYTUJ RĘCZNIE</span>
+                                    <div className="h-px bg-slate-200 flex-1"></div>
+                                </div>
+                                
+                                <div className="flex-1 flex flex-col gap-4">
+                                    <div className="relative">
+                                        <textarea 
+                                            className="w-full h-32 p-4 pt-8 border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:outline-none text-xs font-mono text-slate-700 resize-none shadow-sm bg-slate-50"
+                                            placeholder="Tutaj pojawi się tekst z aparatu. Możesz go poprawić przed analizą..."
+                                            value={inciInput}
+                                            onChange={(e) => setInciInput(e.target.value)}
+                                        />
+                                        <div className="absolute top-3 left-4 flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase">
+                                            <i className="ph ph-pencil-simple text-sm"></i> Weryfikacja tekstu INCI
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="flex flex-col gap-2 mb-2">
+                                        <button onClick={() => {setInciInput(sampleGreat);}} className="text-[10px] bg-slate-100 text-slate-600 py-2.5 rounded-lg border border-slate-200 font-bold hover:bg-slate-200 transition text-center w-full uppercase tracking-wider">
+                                            Wczytaj Skład Wzorcowy (Hero Product)
+                                        </button>
+                                    </div>
+
+                                    <button 
+                                        onClick={handleAnalyze}
+                                        disabled={!inciInput.trim()}
+                                        className="w-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 disabled:shadow-none text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-xl transition-all active:scale-95 mt-auto"
+                                    >
+                                        Analizuj Skład Kosmetyku
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {view === 'results' && results && (
+                            <div className="flex-1 overflow-y-auto bg-slate-50 pb-8">
+                                
+                                <div className={`${results.bgColor} text-white p-8 shadow-md relative overflow-hidden`}>
+                                    <div className="flex items-center gap-4 relative z-10">
+                                        <div className="bg-white/20 p-3 rounded-full backdrop-blur-sm flex items-center justify-center">
+                                            <i className={results.iconClass}></i>
+                                        </div>
+                                        <div>
+                                            <h2 className="text-xl font-extrabold tracking-tight leading-tight">{results.verdict}</h2>
+                                            <p className="text-xs opacity-90 font-medium mt-1 leading-snug">{results.verdictSub}</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="p-5 space-y-6">
+
+                                    {results.leadingIngredient ? (
+                                        <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 relative overflow-hidden">
+                                            <div className="absolute top-0 right-0 p-4 opacity-5">
+                                                <i className="ph ph-crown text-6xl"></i>
+                                            </div>
+                                            <div className="flex justify-between items-start mb-2">
+                                                <h3 className="text-xs font-bold text-amber-500 uppercase tracking-wider flex items-center gap-1">
+                                                    <i className="ph ph-crown text-sm"></i> Prawdziwy Bohater Składu
+                                                </h3>
+                                                <PositionBadge pos={results.leadingIngredient.position} total={results.totalIngredients} isTop5={results.leadingIngredient.isTop5} />
+                                            </div>
+                                            <div className="text-lg font-extrabold text-slate-800 mb-1">{results.leadingIngredient.name}</div>
+                                            <div className="text-xs text-slate-500 font-mono mb-2 border-l-2 border-amber-400 pl-2">{results.leadingIngredient.inci}</div>
+                                            <p className="text-sm text-slate-600 font-medium leading-relaxed">{results.leadingIngredient.desc}</p>
+                                            
+                                            {!results.leadingIngredient.isTop5 && results.leadingIngredient.tier > 1 && (
+                                                <div className="mt-3 text-[10px] text-amber-700 bg-amber-50 p-2 rounded-lg border border-amber-100">
+                                                    <strong>Warto wiedzieć:</strong> Ten składnik nie znajduje się w bazie formuły (Top 5). Jego stężenie może być relatywnie niskie.
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 text-center">
+                                            <h3 className="text-sm font-bold text-slate-500 mb-1">Brak silnego wiodącego składnika</h3>
+                                            <p className="text-xs text-slate-400">Produkt bazuje na nośnikach lub składnikach, których algorytm nie klasyfikuje jako silnie aktywne.</p>
+                                        </div>
+                                    )}
+
+                                    {results.goodIngredients.length > 0 && (
+                                        <div>
+                                            <h3 className="text-sm font-bold text-emerald-700 uppercase tracking-wider mb-3 flex items-center gap-2 border-b border-emerald-100 pb-2">
+                                                <i className="ph ph-leaf text-lg"></i> Dobre Składniki ({results.goodIngredients.length})
+                                            </h3>
+                                            <div className="space-y-3">
+                                                {results.goodIngredients.map((item, idx) => (
+                                                    <div key={idx} className="bg-white p-3 rounded-xl shadow-sm border border-emerald-50 flex gap-3 items-start">
+                                                        <i className="ph ph-check-circle text-emerald-500 text-xl mt-0.5"></i>
+                                                        <div className="flex-1">
+                                                            <div className="flex justify-between items-start mb-1">
+                                                                <div className="text-sm font-bold text-slate-800">{item.name}</div>
+                                                                <PositionBadge pos={item.position} total={results.totalIngredients} isTop5={item.isTop5} />
+                                                            </div>
+                                                            <div className="text-[10px] text-slate-400 font-mono mb-1">{item.inci}</div>
+                                                            <div className="text-xs text-slate-600 leading-snug">{item.desc}</div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {results.badIngredients.length > 0 && (
+                                        <div>
+                                            <h3 className="text-sm font-bold text-red-600 uppercase tracking-wider mb-3 flex items-center gap-2 border-b border-red-100 pb-2 mt-6">
+                                                <i className="ph ph-shield-warning text-lg"></i> Kontrowersje i Wady ({results.badIngredients.length})
+                                            </h3>
+                                            <div className="space-y-3">
+                                                {results.badIngredients.map((item, idx) => {
+                                                    const isCritical = item.severity === 'critical';
+                                                    const isEscalated = item.isTop5 && (item.keys.includes("MINERAL OIL") || item.keys.includes("PHENOXYETHANOL") || item.keys.includes("TRIETHANOLAMINE"));
+                                                    
+                                                    return (
+                                                        <div key={idx} className={`p-3 rounded-xl border flex gap-3 items-start ${isCritical || isEscalated ? 'bg-red-50 border-red-200' : 'bg-orange-50 border-orange-200'}`}>
+                                                            {isCritical || isEscalated ? <i className="ph ph-stop-circle text-red-600 text-xl mt-0.5"></i> : <i className="ph ph-warning text-orange-500 text-xl mt-0.5"></i>}
+                                                            <div className="flex-1">
+                                                                <div className="flex justify-between items-start mb-1">
+                                                                    <div className={`text-sm font-bold ${isCritical || isEscalated ? 'text-red-800' : 'text-orange-800'}`}>
+                                                                        {isCritical ? "Czerwona Flaga!" : isEscalated ? "Krytyczne Stężenie" : "Uwaga na ten składnik"}
+                                                                    </div>
+                                                                    <PositionBadge pos={item.position} total={results.totalIngredients} isTop5={item.isTop5} />
+                                                                </div>
+                                                                <div className="text-[10px] text-slate-500 font-mono mb-1">{item.inci}</div>
+                                                                <div className={`text-xs leading-snug ${isCritical || isEscalated ? 'text-red-700 font-semibold' : 'text-orange-700'}`}>{item.desc}</div>
+                                                            </div>
+                                                        </div>
+                                                    )
+                                                })}
+                                            </div>
+                                        </div>
+                                    )}
+                                    
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
